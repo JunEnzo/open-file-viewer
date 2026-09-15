@@ -229,6 +229,45 @@ const openPptx = vi.hoisted(() =>
       paragraph.append(bullet, content);
       issueNumbering.append(paragraph);
     }
+    const issueCjkNumbering = document.createElement("div");
+    issueCjkNumbering.className = "pptx-issue-cjk-numbering";
+    issueCjkNumbering.style.position = "absolute";
+    issueCjkNumbering.style.left = "200px";
+    issueCjkNumbering.style.top = "300px";
+    issueCjkNumbering.style.width = "600px";
+    issueCjkNumbering.style.height = "200px";
+    for (const text of ["背景概况", "核心技术", "应用场景", "价值总结", "客户案例"]) {
+      const paragraph = document.createElement("div");
+      const bullet = document.createElement("span");
+      bullet.textContent = "■ ";
+      const content = document.createElement("span");
+      content.textContent = text;
+      paragraph.append(bullet, content);
+      issueCjkNumbering.append(paragraph);
+    }
+    const issueAutofitText = document.createElement("div");
+    issueAutofitText.className = "pptx-issue-autofit-text";
+    const issueAutofitParagraph = document.createElement("div");
+    issueAutofitParagraph.style.overflowWrap = "anywhere";
+    issueAutofitParagraph.style.maxWidth = "100%";
+    const issueAutofitRun = document.createElement("span");
+    issueAutofitRun.textContent = "传统办公与运营过程中的挑战！";
+    issueAutofitParagraph.append(issueAutofitRun);
+    issueAutofitText.append(issueAutofitParagraph);
+    const issueDefaultAlignment = document.createElement("div");
+    issueDefaultAlignment.className = "pptx-issue-default-alignment";
+    issueDefaultAlignment.style.position = "absolute";
+    for (const text of ["指标领先", "员工人数"]) {
+      const paragraph = document.createElement("div");
+      paragraph.style.textAlign = "center";
+      const run = document.createElement("span");
+      run.textContent = text;
+      paragraph.append(run);
+      issueDefaultAlignment.append(paragraph);
+    }
+    const issueSlideNumber = document.createElement("span");
+    issueSlideNumber.className = "pptx-issue-slide-number";
+    issueSlideNumber.textContent = "‹#›";
     page.append(
       mirroredTextGroup,
       inheritedPlaceholder,
@@ -237,7 +276,11 @@ const openPptx = vi.hoisted(() =>
       redCircleCallout,
       diagramGroup,
       issueFillShape,
-      issueNumbering
+      issueNumbering,
+      issueCjkNumbering,
+      issueAutofitText,
+      issueDefaultAlignment,
+      issueSlideNumber
     );
     viewport.append(page);
     wrapper.append(viewport);
@@ -1521,6 +1564,29 @@ describe("officePlugin", () => {
     expect(pages[1]?.dataset.ofvDocxFlowContinuation).toBe("true");
   });
 
+  it("does not paginate authored DOCX section pages a second time", async () => {
+    renderDocxAsync.mockImplementationOnce(async (_data: unknown, bodyContainer: HTMLElement) => {
+      const wrapper = document.createElement("div");
+      wrapper.className = "ofv-docx-wrapper";
+      wrapper.innerHTML = `<section class="ofv-docx" style="height:100px;padding:10px"><article><p>Page 1</p><p>Tail 1</p></article></section>
+        <section class="ofv-docx" style="height:100px;padding:10px"><article><p>Page 2</p><p>Tail 2</p></article></section>`;
+      wrapper.querySelectorAll<HTMLElement>("article p:last-child").forEach((paragraph) => {
+        paragraph.getBoundingClientRect = () => ({
+          x: 10, y: 80, top: 80, right: 590, bottom: 140, left: 10, width: 580, height: 60, toJSON: () => ({})
+        });
+      });
+      bodyContainer.append(wrapper);
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    createViewer({ container, file: await createDocxWithAuthoredPageSections(), fileName: "sections.docx", plugins: [officePlugin()] });
+
+    await waitFor(() => container.querySelectorAll("section.ofv-docx").length === 2);
+    const pages = Array.from(container.querySelectorAll<HTMLElement>("section.ofv-docx"));
+    expect(pages.map((page) => page.querySelector("article")?.textContent)).toEqual(["Page 1Tail 1", "Page 2Tail 2"]);
+    expect(container.querySelector("[data-ofv-docx-flow-continuation]")).toBeNull();
+  });
+
   it("uses Word's taller automatic line box for DOCX table-cell paragraphs", async () => {
     renderDocxAsync.mockImplementationOnce(async (_data: unknown, bodyContainer: HTMLElement) => {
       const wrapper = document.createElement("div");
@@ -1532,7 +1598,10 @@ describe("officePlugin", () => {
       bodyParagraph.textContent = "Body";
       const table = document.createElement("table");
       const cellParagraph = table.insertRow().insertCell().appendChild(document.createElement("p"));
-      cellParagraph.textContent = "Cell";
+      const cellRun = document.createElement("span");
+      cellRun.style.fontSize = "9.5pt";
+      cellRun.textContent = "Cell";
+      cellParagraph.append(cellRun);
       article.append(bodyParagraph, table);
       page.append(article);
       wrapper.append(page);
@@ -1543,7 +1612,9 @@ describe("officePlugin", () => {
       "word/document.xml",
       `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
         <w:p><w:pPr><w:spacing w:line="300" w:lineRule="auto"/></w:pPr><w:r><w:t>Body</w:t></w:r></w:p>
-        <w:tbl><w:tr><w:tc><w:p><w:pPr><w:spacing w:line="300" w:lineRule="auto"/></w:pPr><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+        <w:tbl><w:tr><w:tc><w:p><w:pPr><w:spacing w:line="300" w:lineRule="auto"/></w:pPr>
+          <w:r><w:rPr><w:sz w:val="19"/></w:rPr><w:t>Cell</w:t></w:r>
+        </w:p></w:tc></w:tr></w:tbl>
       </w:body></w:document>`
     );
     const container = document.createElement("div");
@@ -1561,7 +1632,63 @@ describe("officePlugin", () => {
     await waitFor(() => container.querySelectorAll("[data-ofv-docx-auto-line-height='true']").length === 2);
 
     expect(container.querySelector<HTMLParagraphElement>("article > p")?.style.lineHeight).toBe("1.6375");
-    expect(container.querySelector<HTMLParagraphElement>("td > p")?.style.lineHeight).toBe("2");
+    expect(container.querySelector<HTMLParagraphElement>("td > p")?.style.lineHeight).toBe("25.3333px");
+    expect(container.querySelector<HTMLParagraphElement>("td > p")?.style.marginTop).toBe("0px");
+  });
+
+  it("removes vertical-merge placeholder paragraphs and restores diagonal DOCX cell borders", async () => {
+    renderDocxAsync.mockImplementationOnce(async (_data: unknown, bodyContainer: HTMLElement) => {
+      const wrapper = document.createElement("div");
+      wrapper.className = "ofv-docx-wrapper";
+      const page = document.createElement("section");
+      page.className = "ofv-docx";
+      const article = document.createElement("article");
+      const table = document.createElement("table");
+      const firstRow = table.insertRow();
+      const mergedCell = firstRow.insertCell();
+      mergedCell.rowSpan = 3;
+      const label = document.createElement("p");
+      label.textContent = "部门";
+      mergedCell.append(label, document.createElement("p"), document.createElement("p"));
+      firstRow.insertCell().textContent = "第一行";
+      table.insertRow().insertCell().textContent = "第二行";
+      table.insertRow().insertCell().textContent = "第三行";
+      article.append(table);
+      page.append(article);
+      wrapper.append(page);
+      bodyContainer.append(wrapper);
+    });
+    const zip = new JSZip();
+    zip.file(
+      "word/document.xml",
+      `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl>
+        <w:tr>
+          <w:tc><w:tcPr><w:vMerge w:val="restart"/><w:tcBorders><w:tl2br w:val="single" w:sz="8" w:color="FF0000"/></w:tcBorders></w:tcPr><w:p><w:r><w:t>部门</w:t></w:r></w:p></w:tc>
+          <w:tc><w:p><w:r><w:t>第一行</w:t></w:r></w:p></w:tc>
+        </w:tr>
+        <w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:p><w:r><w:t>第二行</w:t></w:r></w:p></w:tc></w:tr>
+        <w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:p><w:r><w:t>第三行</w:t></w:r></w:p></w:tc></w:tr>
+      </w:tbl></w:body></w:document>`
+    );
+    const container = document.createElement("div");
+    document.body.append(container);
+    createViewer({
+      container,
+      file: await zip.generateAsync({
+        type: "blob",
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      }),
+      fileName: "merged-diagonal-table.docx",
+      plugins: [officePlugin()]
+    });
+
+    await waitFor(() => Boolean(container.querySelector("[data-ofv-docx-merged-empty-paragraphs-removed='2']")));
+
+    const mergedCell = container.querySelector<HTMLTableCellElement>("td[rowspan='3']");
+    expect(mergedCell?.querySelectorAll(":scope > p")).toHaveLength(1);
+    expect(mergedCell?.dataset.ofvDocxDiagonalTl2br).toBe("true");
+    expect(mergedCell?.style.getPropertyValue("--ofv-docx-diagonal-color")).toBe("#FF0000");
+    expect(mergedCell?.style.getPropertyValue("--ofv-docx-diagonal-half-width")).toBe("0.5pt");
   });
 
   it("aligns right-tab DOCX text to the OOXML tab position", async () => {
@@ -1863,7 +1990,7 @@ describe("officePlugin", () => {
     expect(pages.map((page) => page.querySelector("footer")?.textContent)).toEqual(["-2-", "-3-", "-4-"]);
   });
 
-  it("removes an empty continuation page after restoring the closing date to the cover", async () => {
+  it("removes an empty generated continuation with a section break after restoring the closing date", async () => {
     renderDocxAsync.mockImplementationOnce(async (_data: unknown, bodyContainer: HTMLElement) => {
       const wrapper = document.createElement("div");
       wrapper.className = "ofv-docx-wrapper";
@@ -1881,7 +2008,7 @@ describe("officePlugin", () => {
       emptyContinuation.style.width = "595.3pt";
       emptyContinuation.style.height = "800pt";
       emptyContinuation.style.padding = "36pt";
-      emptyContinuation.innerHTML = `<article><p>2 0 2 5 年 7 月 7 日</p></article><footer><p>—1—</p></footer>`;
+      emptyContinuation.innerHTML = `<article><p>2 0 2 5 年 7 月 7 日</p><p data-ofv-docx-section-break="true"></p></article><footer><p>—1—</p></footer>`;
 
       const bodyPage = document.createElement("section");
       bodyPage.className = "ofv-docx";
@@ -3021,6 +3148,7 @@ describe("officePlugin", () => {
     });
 
     await waitFor(() => Boolean(container.querySelector(".ofv-presentation-summary")));
+    await waitFor(() => openPptx.mock.calls.length === 1);
 
     expect(openPptx).toHaveBeenCalledTimes(1);
     const summary = container.querySelector<HTMLElement>(".ofv-presentation-summary");
@@ -3084,6 +3212,30 @@ describe("officePlugin", () => {
     expect(putImageData).toHaveBeenCalledTimes(1);
   });
 
+  it("promotes SVG-only PPTX image relationships before rendering", async () => {
+    const container = document.createElement("div");
+    const callsBefore = openPptx.mock.calls.length;
+    document.body.append(container);
+
+    createViewer({
+      container,
+      file: await createPptxWithSvgOnlyImage(),
+      fileName: "embedded-svg.pptx",
+      plugins: [officePlugin()]
+    });
+
+    await waitFor(() => openPptx.mock.calls.length === callsBefore + 1);
+
+    const renderBuffer = openPptx.mock.calls[callsBefore]?.[0] as ArrayBuffer;
+    const renderedZip = await JSZip.loadAsync(renderBuffer);
+    const slideXml = await renderedZip.file("ppt/slides/slide1.xml")?.async("text");
+    const slide = new DOMParser().parseFromString(slideXml || "", "application/xml");
+    const blip = Array.from(slide.getElementsByTagName("*")).find((element) => element.localName === "blip");
+    expect(blip?.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "embed")).toBe(
+      "rIdSvg"
+    );
+  });
+
   it("restores explicit PPTX shape fills and auto-numbering lost by the renderer", async () => {
     const container = document.createElement("div");
     document.body.append(container);
@@ -3103,6 +3255,19 @@ describe("officePlugin", () => {
         (element) => element.textContent?.trim()
       )
     ).toEqual(["I.", "II.", "III.", "IV."]);
+    expect(
+      Array.from(container.querySelectorAll<HTMLElement>(".pptx-issue-cjk-numbering [data-ofv-pptx-auto-number]")).map(
+        (element) => element.textContent?.trim()
+      )
+    ).toEqual(["一．", "二．", "三．", "四．", "五．"]);
+    expect(container.querySelector<HTMLElement>(".pptx-issue-autofit-text > div")?.style.whiteSpace).toBe("nowrap");
+    expect(container.querySelector<HTMLElement>(".pptx-issue-autofit-text > div")?.style.overflowWrap).toBe("normal");
+    expect(
+      Array.from(container.querySelectorAll<HTMLElement>(".pptx-issue-default-alignment > div")).map(
+        (element) => element.style.textAlign
+      )
+    ).toEqual(["left", "left"]);
+    expect(container.querySelector<HTMLElement>(".pptx-issue-slide-number")?.textContent).toBe("1");
   });
 
   it("responds to shared toolbar zoom for PPTX previews", async () => {
@@ -3481,8 +3646,8 @@ describe("officePlugin", () => {
     expect(pages[0].querySelector(".ofv-msdoc-subtitle")?.textContent).toBe("整改的通知");
     expect(pages[1].textContent).toContain("3.接口改造应用清单");
     expect(pages[2].textContent?.trim()).toBe("");
-    expect(pages[3].querySelectorAll(".ofv-msdoc-notice-table tr")).toHaveLength(19);
-    expect(pages[4].querySelectorAll(".ofv-msdoc-notice-table tr")).toHaveLength(3);
+    expect(pages[3].querySelectorAll(".ofv-msdoc-notice-table tr")).toHaveLength(20);
+    expect(pages[4].querySelectorAll(".ofv-msdoc-notice-table tr")).toHaveLength(2);
     expect(pages[5].querySelectorAll(".ofv-msdoc-notice-table tr")).toHaveLength(16);
     expect(pages[6].querySelectorAll(".ofv-msdoc-notice-table tr")).toHaveLength(1);
     expect(pages[4].querySelector(".ofv-msdoc-notice-table th")).toBeNull();
@@ -3774,6 +3939,22 @@ async function createDocxWithSection(pageMargins = ""): Promise<Blob> {
           <w:sectPr><w:pgSz w:w="11906" w:h="16838"/>${pageMargins}</w:sectPr>
         </w:body>
       </w:document>`
+  );
+  return zip.generateAsync({
+    type: "blob",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  });
+}
+
+async function createDocxWithAuthoredPageSections(): Promise<Blob> {
+  const zip = new JSZip();
+  zip.file(
+    "word/document.xml",
+    `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+      <w:p><w:r><w:t>Page 1</w:t></w:r></w:p>
+      <w:p><w:pPr><w:sectPr/></w:pPr><w:r><w:t>Tail 1</w:t></w:r></w:p>
+      <w:p><w:r><w:t>Page 2</w:t></w:r></w:p><w:p><w:r><w:t>Tail 2</w:t></w:r></w:p><w:sectPr/>
+    </w:body></w:document>`
   );
   return zip.generateAsync({
     type: "blob",
@@ -5036,6 +5217,34 @@ async function createPptxWithTiffImage(): Promise<Blob> {
   });
 }
 
+async function createPptxWithSvgOnlyImage(): Promise<Blob> {
+  const zip = new JSZip();
+  zip.file(
+    "ppt/slides/slide1.xml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+      <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+        xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+        xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main">
+        <p:cSld><p:spTree><p:pic><p:blipFill><a:blip>
+          <a:extLst><a:ext><asvg:svgBlip r:embed="rIdSvg"/></a:ext></a:extLst>
+        </a:blip></p:blipFill></p:pic></p:spTree></p:cSld>
+      </p:sld>`
+  );
+  zip.file(
+    "ppt/slides/_rels/slide1.xml.rels",
+    `<?xml version="1.0" encoding="UTF-8"?>
+      <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        <Relationship Id="rIdSvg" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.svg"/>
+      </Relationships>`
+  );
+  zip.file("ppt/media/image1.svg", `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>`);
+  return zip.generateAsync({
+    type: "blob",
+    mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  });
+}
+
 async function createPptxVisualCorrectionFixture(): Promise<Blob> {
   const zip = new JSZip();
   zip.file(
@@ -5043,6 +5252,9 @@ async function createPptxVisualCorrectionFixture(): Promise<Blob> {
     `<?xml version="1.0" encoding="UTF-8"?>
       <p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
         <p:sldSz cx="12800000" cy="7200000"/>
+        <p:defaultTextStyle xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:lvl1pPr algn="l"/>
+        </p:defaultTextStyle>
       </p:presentation>`
   );
   zip.file(
@@ -5067,6 +5279,31 @@ async function createPptxVisualCorrectionFixture(): Promise<Blob> {
               <a:p><a:pPr><a:buAutoNum type="romanUcPeriod"/></a:pPr><a:r><a:t>预制包标准化程度介绍</a:t></a:r></a:p>
             </p:txBody>
           </p:sp>
+          <p:sp>
+            <p:spPr><a:xfrm><a:off x="2000000" y="3000000"/><a:ext cx="6000000" cy="2000000"/></a:xfrm></p:spPr>
+            <p:txBody><a:bodyPr/><a:lstStyle/>
+              <a:p><a:pPr><a:buAutoNum type="ea1JpnChsDbPeriod"/></a:pPr><a:r><a:t>背景概况</a:t></a:r></a:p>
+              <a:p><a:pPr><a:buAutoNum type="ea1JpnChsDbPeriod"/></a:pPr><a:r><a:t>核心技术</a:t></a:r></a:p>
+              <a:p><a:pPr><a:buAutoNum type="ea1JpnChsDbPeriod"/></a:pPr><a:r><a:t>应用场景</a:t></a:r></a:p>
+              <a:p><a:pPr><a:buAutoNum type="ea1JpnChsDbPeriod"/></a:pPr><a:r><a:t>价值总结</a:t></a:r></a:p>
+              <a:p><a:pPr><a:buAutoNum type="ea1JpnChsDbPeriod"/></a:pPr><a:r><a:t>客户案例</a:t></a:r></a:p>
+            </p:txBody>
+          </p:sp>
+          <p:grpSp>
+            <p:sp>
+              <p:spPr><a:xfrm><a:off x="100" y="100"/><a:ext cx="1000" cy="100"/></a:xfrm></p:spPr>
+              <p:txBody><a:bodyPr><a:spAutoFit/></a:bodyPr><a:lstStyle/>
+                <a:p><a:r><a:t>传统办公与运营过程中的挑战！</a:t></a:r></a:p>
+              </p:txBody>
+            </p:sp>
+            <p:sp>
+              <p:spPr><a:xfrm><a:off x="100" y="300"/><a:ext cx="1000" cy="200"/></a:xfrm></p:spPr>
+              <p:txBody><a:bodyPr/><a:lstStyle/>
+                <a:p><a:r><a:t>指标领先</a:t></a:r></a:p>
+                <a:p><a:r><a:t>员工人数</a:t></a:r></a:p>
+              </p:txBody>
+            </p:sp>
+          </p:grpSp>
         </p:spTree></p:cSld>
       </p:sld>`
   );

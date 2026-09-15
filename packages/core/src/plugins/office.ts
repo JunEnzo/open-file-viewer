@@ -1432,11 +1432,13 @@ async function normalizeDocxLayout(container: HTMLElement, arrayBuffer: ArrayBuf
   repairDocxDefaultPageMargins(container, hints.needsDefaultPageMargins);
   repairDocxSvgImageAlternatives(container, svgImageAlternatives);
   repairUnexpectedDocxTableTextDirections(container, hints.hasVerticalTextDirection);
+  repairDocxDiagonalCellBorders(container, hints.diagonalCellBorders);
   repairDocxFloatingShapeTextboxes(container, hints.floatingShapes);
   repairDocxChartPlaceholders(container, charts);
   repairDocxComplexScriptFontSizes(container, hints.complexScriptFontSizeParagraphs);
   repairDocxCharacterSpacing(container, hints.characterSpacingParagraphs);
   repairDocxAutoLineHeights(container, hints.autoLineHeightParagraphs);
+  repairDocxMergedCellEmptyParagraphs(container, hints.mergedCellEmptyParagraphs);
   markDocxSectionBreakParagraphs(container, hints.sectionBreakParagraphIndexes);
   repairDocxCharacterScaling(container, hints.characterScaleParagraphs);
   const pages = container.querySelectorAll<HTMLElement>("section.ofv-docx");
@@ -1751,6 +1753,20 @@ type DocxLayoutHints = {
     lineMultiple: number;
     fontSizePt?: number;
   }>;
+  diagonalCellBorders: Array<{
+    tableIndex: number;
+    rowIndex: number;
+    columnIndex: number;
+    direction: "tl2br" | "tr2bl";
+    color: string;
+    widthPt: number;
+  }>;
+  mergedCellEmptyParagraphs: Array<{
+    tableIndex: number;
+    rowIndex: number;
+    columnIndex: number;
+    count: number;
+  }>;
   sectionBreakParagraphIndexes: number[];
   needsDefaultPageMargins: boolean;
   hasVerticalTextDirection: boolean;
@@ -1784,6 +1800,8 @@ async function readDocxLayoutHints(arrayBuffer: ArrayBuffer): Promise<DocxLayout
       characterScaleParagraphs: documentXml ? extractDocxCharacterScaleHints(documentXml) : [],
       characterSpacingParagraphs: documentXml ? extractDocxCharacterSpacingHints(documentXml) : [],
       autoLineHeightParagraphs: documentXml ? extractDocxAutoLineHeightHints(documentXml) : [],
+      diagonalCellBorders: documentXml ? extractDocxDiagonalCellBorders(documentXml) : [],
+      mergedCellEmptyParagraphs: documentXml ? extractDocxMergedCellEmptyParagraphs(documentXml) : [],
       sectionBreakParagraphIndexes: documentXml ? extractDocxSectionBreakParagraphIndexes(documentXml) : [],
       needsDefaultPageMargins: Boolean(documentXml && /<w:sectPr\b/.test(documentXml) && !/<w:pgMar\b/.test(documentXml)),
       hasVerticalTextDirection: Boolean(documentXml && /<w:textDirection\b/.test(documentXml))
@@ -1799,6 +1817,8 @@ async function readDocxLayoutHints(arrayBuffer: ArrayBuffer): Promise<DocxLayout
       characterScaleParagraphs: [],
       characterSpacingParagraphs: [],
       autoLineHeightParagraphs: [],
+      diagonalCellBorders: [],
+      mergedCellEmptyParagraphs: [],
       sectionBreakParagraphIndexes: [],
       needsDefaultPageMargins: false,
       hasVerticalTextDirection: false
@@ -2217,15 +2237,188 @@ function repairDocxAutoLineHeights(
     // OOXML's auto value is measured in 240ths of Word's font line box,
     // while a CSS unitless line-height is measured directly against 1em.
     // Word also gives table-cell paragraphs a taller line box than body text.
-    const singleLineEm = paragraph.closest("td, th")
-      ? DOCX_WORD_TABLE_SINGLE_LINE_EM
-      : DOCX_WORD_SINGLE_LINE_EM;
-    paragraph.style.lineHeight = formatCssNumber(hint.lineMultiple * singleLineEm);
+    const tableCell = paragraph.closest("td, th");
+    const singleLineEm = tableCell ? DOCX_WORD_TABLE_SINGLE_LINE_EM : DOCX_WORD_SINGLE_LINE_EM;
+    if (tableCell) {
+      const renderedFontSizePx =
+        getDocxRenderedTextFontSizeInPixels(paragraph) ||
+        (hint.fontSizePt ? hint.fontSizePt * (4 / 3) : getLargestDocxFontSize(paragraph));
+      paragraph.style.lineHeight = `${formatCssNumber(hint.lineMultiple * singleLineEm * renderedFontSizePx)}px`;
+      paragraph.style.marginTop = "0px";
+    } else {
+      paragraph.style.lineHeight = formatCssNumber(hint.lineMultiple * singleLineEm);
+    }
     if (!hint.text && hint.fontSizePt) {
       paragraph.style.fontSize = `${formatCssNumber(hint.fontSizePt)}pt`;
       paragraph.style.minHeight = `${formatCssNumber(hint.fontSizePt * hint.lineMultiple * singleLineEm)}pt`;
     }
     paragraph.dataset.ofvDocxAutoLineHeight = "true";
+  }
+}
+
+function getDocxRenderedTextFontSizeInPixels(paragraph: HTMLParagraphElement): number {
+  const view = paragraph.ownerDocument.defaultView;
+  let largest = 0;
+  for (const run of paragraph.querySelectorAll<HTMLElement>("span")) {
+    if (!normalizePreviewText(run.textContent || "")) {
+      continue;
+    }
+    const inlineSize = parseCssLengthInPixels(run.style.fontSize);
+    const computedSize = view ? parseCssLengthInPixels(view.getComputedStyle(run).fontSize) : 0;
+    largest = Math.max(largest, inlineSize || computedSize);
+  }
+  return largest;
+}
+
+type DocxSourceTableCell = {
+  tableIndex: number;
+  rowIndex: number;
+  columnIndex: number;
+  cell: Element;
+  properties?: Element;
+};
+
+function forEachDocxSourceTableCell(xml: string, visit: (source: DocxSourceTableCell) => void): void {
+  const document = parseOfficeXml(xml);
+  if (!document) {
+    return;
+  }
+  const tables = Array.from(document.getElementsByTagName("*")).filter((element) => element.localName === "tbl");
+  tables.forEach((table, tableIndex) => {
+    const rows = Array.from(table.children).filter((element) => element.localName === "tr");
+    rows.forEach((row, rowIndex) => {
+      const rowProperties = firstDirectOfficeChild(row, "trPr");
+      const gridBefore = rowProperties ? firstDirectOfficeChild(rowProperties, "gridBefore") : undefined;
+      const parsedGridBefore = Number(gridBefore ? getXmlAttribute(gridBefore, "val") : 0);
+      let columnIndex = Number.isFinite(parsedGridBefore) && parsedGridBefore > 0 ? parsedGridBefore : 0;
+      for (const cell of Array.from(row.children).filter((element) => element.localName === "tc")) {
+        const properties = firstDirectOfficeChild(cell, "tcPr");
+        visit({ tableIndex, rowIndex, columnIndex, cell, properties });
+        const gridSpan = properties ? firstDirectOfficeChild(properties, "gridSpan") : undefined;
+        const parsedGridSpan = Number(gridSpan ? getXmlAttribute(gridSpan, "val") : 1);
+        columnIndex += Number.isFinite(parsedGridSpan) && parsedGridSpan > 0 ? parsedGridSpan : 1;
+      }
+    });
+  });
+}
+
+function extractDocxDiagonalCellBorders(xml: string): DocxLayoutHints["diagonalCellBorders"] {
+  const hints: DocxLayoutHints["diagonalCellBorders"] = [];
+  forEachDocxSourceTableCell(xml, ({ tableIndex, rowIndex, columnIndex, properties }) => {
+    const borders = properties ? firstDirectOfficeChild(properties, "tcBorders") : undefined;
+    if (!borders) {
+      return;
+    }
+    for (const direction of ["tl2br", "tr2bl"] as const) {
+      const border = firstDirectOfficeChild(borders, direction);
+      const value = border ? (getXmlAttribute(border, "val") || "single").toLowerCase() : "none";
+      if (!border || value === "none" || value === "nil") {
+        continue;
+      }
+      const rawColor = (getXmlAttribute(border, "color") || "000000").replace(/^#/, "");
+      const widthEighthPoints = Number(getXmlAttribute(border, "sz"));
+      hints.push({
+        tableIndex,
+        rowIndex,
+        columnIndex,
+        direction,
+        color: /^[0-9a-f]{6}$/i.test(rawColor) ? `#${rawColor}` : "#000000",
+        widthPt: Number.isFinite(widthEighthPoints) && widthEighthPoints > 0
+          ? Math.max(0.5, Math.min(6, widthEighthPoints / 8))
+          : 0.75
+      });
+    }
+  });
+  return hints;
+}
+
+function extractDocxMergedCellEmptyParagraphs(xml: string): DocxLayoutHints["mergedCellEmptyParagraphs"] {
+  const hints: DocxLayoutHints["mergedCellEmptyParagraphs"] = [];
+  forEachDocxSourceTableCell(xml, ({ tableIndex, rowIndex, columnIndex, cell, properties }) => {
+    const verticalMerge = properties ? firstDirectOfficeChild(properties, "vMerge") : undefined;
+    if (!verticalMerge || (getXmlAttribute(verticalMerge, "val") || "continue").toLowerCase() === "restart") {
+      return;
+    }
+    const emptyParagraphs = Array.from(cell.children)
+      .filter((element) => element.localName === "p")
+      .filter((paragraph) => {
+        if (normalizePreviewText(paragraph.textContent || "")) {
+          return false;
+        }
+        return !Array.from(paragraph.getElementsByTagName("*")).some((element) =>
+          ["br", "tab", "drawing", "pict", "object"].includes(element.localName)
+        );
+      }).length;
+    if (emptyParagraphs > 0) {
+      hints.push({ tableIndex, rowIndex, columnIndex, count: emptyParagraphs });
+    }
+  });
+  return hints;
+}
+
+function findRenderedDocxTableCell(
+  table: HTMLTableElement,
+  rowIndex: number,
+  columnIndex: number
+): HTMLTableCellElement | undefined {
+  return Array.from(mapDocxTableCellPlacements(Array.from(table.rows)).values())
+    .find((placement) =>
+      placement.columnIndex === columnIndex &&
+      placement.rowIndex <= rowIndex &&
+      placement.rowIndex + placement.rowSpan > rowIndex
+    )?.cell;
+}
+
+function repairDocxDiagonalCellBorders(
+  container: HTMLElement,
+  hints: DocxLayoutHints["diagonalCellBorders"]
+): void {
+  const tables = Array.from(container.querySelectorAll<HTMLTableElement>("section.ofv-docx article table"));
+  for (const hint of hints) {
+    const cell = tables[hint.tableIndex]
+      ? findRenderedDocxTableCell(tables[hint.tableIndex]!, hint.rowIndex, hint.columnIndex)
+      : undefined;
+    if (!cell) {
+      continue;
+    }
+    if (hint.direction === "tl2br") {
+      cell.dataset.ofvDocxDiagonalTl2br = "true";
+    } else {
+      cell.dataset.ofvDocxDiagonalTr2bl = "true";
+    }
+    cell.style.setProperty("--ofv-docx-diagonal-color", hint.color);
+    cell.style.setProperty("--ofv-docx-diagonal-half-width", `${formatCssNumber(hint.widthPt / 2)}pt`);
+  }
+}
+
+function repairDocxMergedCellEmptyParagraphs(
+  container: HTMLElement,
+  hints: DocxLayoutHints["mergedCellEmptyParagraphs"]
+): void {
+  const tables = Array.from(container.querySelectorAll<HTMLTableElement>("section.ofv-docx article table"));
+  const mergedCells = new Set<HTMLTableCellElement>();
+  for (const hint of hints) {
+    const cell = tables[hint.tableIndex]
+      ? findRenderedDocxTableCell(tables[hint.tableIndex]!, hint.rowIndex, hint.columnIndex)
+      : undefined;
+    if (cell && cell.rowSpan > 1) {
+      mergedCells.add(cell);
+    }
+  }
+  for (const cell of mergedCells) {
+    const paragraphs = Array.from(cell.children).filter(
+      (element): element is HTMLParagraphElement => element instanceof HTMLParagraphElement
+    );
+    const removable = paragraphs
+      .filter((paragraph) =>
+        !normalizePreviewText(paragraph.textContent || "") &&
+        !paragraph.querySelector("br, hr, img, svg, canvas, video, audio, object, table")
+      )
+      .reverse();
+    removable.forEach((paragraph) => paragraph.remove());
+    if (removable.length > 0) {
+      cell.dataset.ofvDocxMergedEmptyParagraphsRemoved = String(removable.length);
+    }
   }
 }
 
@@ -2914,6 +3107,13 @@ function paginateDocxFlow(container: HTMLElement): void {
   }
 
   const sourcePages = Array.from(wrapper.querySelectorAll<HTMLElement>(":scope > section.ofv-docx"));
+  const hasAuthoredPageSections =
+    sourcePages.length > 1 &&
+    sourcePages.slice(0, -1).every((page) => page.querySelector("[data-ofv-docx-section-break='true']"));
+  if (hasAuthoredPageSections) {
+    updateDocxContinuationPageNumbers(wrapper);
+    return;
+  }
   for (const sourcePage of sourcePages) {
     paginateDocxPage(sourcePage);
   }
@@ -3044,7 +3244,10 @@ function repairDocxFirstPageClosingDate(container: HTMLElement): void {
     return;
   }
   const sourcePage = dateParagraph.closest<HTMLElement>("section.ofv-docx");
-  if (sourcePage?.querySelector("[data-ofv-docx-section-break='true']")) {
+  if (
+    sourcePage?.querySelector("[data-ofv-docx-section-break='true']") &&
+    sourcePage.dataset.ofvDocxFlowContinuation !== "true"
+  ) {
     return;
   }
   const signatory = Array.from(firstPage.querySelectorAll<HTMLElement>("article p"))
@@ -6162,6 +6365,8 @@ async function renderPptx(panel: HTMLElement, arrayBuffer: ArrayBuffer): Promise
   let autofitLineHeightCorrections: PptxAutofitLineHeightCorrection[] = [];
   let shapeFillCorrections: PptxShapeFillCorrection[] = [];
   let autoNumberingCorrections: PptxAutoNumberingCorrection[] = [];
+  let autofitWrapCorrections: PptxAutofitWrapCorrection[] = [];
+  let textAlignmentCorrections: PptxTextAlignmentCorrection[] = [];
 
   try {
     zip = await JSZip.loadAsync(arrayBuffer);
@@ -6182,14 +6387,19 @@ async function renderPptx(panel: HTMLElement, arrayBuffer: ArrayBuffer): Promise
       console.warn("PPTX autofit line-height extraction failed:", error);
     }
     try {
-      ({ shapeFillCorrections, autoNumberingCorrections } = await inspectPptxVisualCorrections(zip));
+      ({
+        shapeFillCorrections,
+        autoNumberingCorrections,
+        autofitWrapCorrections,
+        textAlignmentCorrections
+      } = await inspectPptxVisualCorrections(zip));
     } catch (error) {
       console.warn("PPTX visual correction extraction failed:", error);
     }
     try {
-      renderBuffer = (await convertPptxTiffImages(zip)) || arrayBuffer;
+      renderBuffer = (await preparePptxRenderBuffer(zip)) || arrayBuffer;
     } catch (error) {
-      console.warn("PPTX TIFF image conversion failed:", error);
+      console.warn("PPTX media normalization failed:", error);
     }
   }
 
@@ -6202,7 +6412,9 @@ async function renderPptx(panel: HTMLElement, arrayBuffer: ArrayBuffer): Promise
       placeholderFontCorrections,
       autofitLineHeightCorrections,
       shapeFillCorrections,
-      autoNumberingCorrections
+      autoNumberingCorrections,
+      autofitWrapCorrections,
+      textAlignmentCorrections
     );
   } catch (error) {
     container.replaceChildren();
@@ -6219,6 +6431,53 @@ async function renderPptx(panel: HTMLElement, arrayBuffer: ArrayBuffer): Promise
         ? "PPTX 渲染超时，请稍后重试或转换为 PDF 后预览。"
         : "PPTX 渲染失败，请检查文件是否损坏。";
   }
+}
+
+const OFFICE_RELATIONSHIPS_NAMESPACE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+async function preparePptxRenderBuffer(zip: JSZip): Promise<ArrayBuffer | undefined> {
+  const promotedSvgImages = await promotePptxSvgImages(zip);
+  const convertedTiffBuffer = await convertPptxTiffImages(zip);
+  if (convertedTiffBuffer) {
+    return convertedTiffBuffer;
+  }
+  return promotedSvgImages ? zip.generateAsync({ type: "arraybuffer" }) : undefined;
+}
+
+async function promotePptxSvgImages(zip: JSZip): Promise<boolean> {
+  const xmlEntries = Object.values(zip.files).filter(
+    (entry) => !entry.dir && /^ppt\/.+\.xml$/i.test(entry.name)
+  );
+  let promoted = false;
+  for (const entry of xmlEntries) {
+    const xml = await entry.async("text");
+    if (!xml.includes("svgBlip")) {
+      continue;
+    }
+    const document = parseOfficeXml(xml);
+    if (!document) {
+      continue;
+    }
+    let changed = false;
+    const blips = Array.from(document.getElementsByTagName("*")).filter((element) => element.localName === "blip");
+    for (const blip of blips) {
+      if (getXmlAttribute(blip, "embed")) {
+        continue;
+      }
+      const svgBlip = Array.from(blip.getElementsByTagName("*")).find((element) => element.localName === "svgBlip");
+      const relationshipId = svgBlip ? getXmlAttribute(svgBlip, "embed") : undefined;
+      if (!relationshipId) {
+        continue;
+      }
+      blip.setAttributeNS(OFFICE_RELATIONSHIPS_NAMESPACE, "r:embed", relationshipId);
+      changed = true;
+    }
+    if (changed) {
+      zip.file(entry.name, new XMLSerializer().serializeToString(document));
+      promoted = true;
+    }
+  }
+  return promoted;
 }
 
 async function convertPptxTiffImages(zip: JSZip): Promise<ArrayBuffer | undefined> {
@@ -6428,12 +6687,27 @@ type PptxAutoNumberingCorrection = PptxShapeGeometry & {
   }>;
 };
 
+type PptxAutofitWrapCorrection = {
+  slideIndex: number;
+  text: string;
+};
+
+type PptxTextAlignmentCorrection = {
+  slideIndex: number;
+  paragraphs: Array<{
+    alignment: string;
+    text: string;
+  }>;
+};
+
 function normalizePptxLayout(
   container: HTMLElement,
   placeholderFontCorrections: PptxPlaceholderFontCorrection[],
   autofitLineHeightCorrections: PptxAutofitLineHeightCorrection[],
   shapeFillCorrections: PptxShapeFillCorrection[],
-  autoNumberingCorrections: PptxAutoNumberingCorrection[]
+  autoNumberingCorrections: PptxAutoNumberingCorrection[],
+  autofitWrapCorrections: PptxAutofitWrapCorrection[],
+  textAlignmentCorrections: PptxTextAlignmentCorrection[]
 ): void {
   const slideCanvases = findPptxSlideCanvases(container);
   for (const slide of slideCanvases) {
@@ -6445,6 +6719,9 @@ function normalizePptxLayout(
   normalizePptxAutofitLineHeights(container, autofitLineHeightCorrections);
   normalizePptxShapeFills(container, shapeFillCorrections);
   normalizePptxAutoNumbering(container, autoNumberingCorrections);
+  normalizePptxAutofitWrapping(container, autofitWrapCorrections);
+  normalizePptxTextAlignment(container, textAlignmentCorrections);
+  normalizePptxSlideNumbers(container);
   normalizePptxCircleCalloutText(container);
   normalizePptxDiagramCycleText(container);
   normalizePptxMirroredText(container);
@@ -6455,14 +6732,18 @@ function schedulePptxLayoutNormalization(
   placeholderFontCorrections: PptxPlaceholderFontCorrection[],
   autofitLineHeightCorrections: PptxAutofitLineHeightCorrection[],
   shapeFillCorrections: PptxShapeFillCorrection[],
-  autoNumberingCorrections: PptxAutoNumberingCorrection[]
+  autoNumberingCorrections: PptxAutoNumberingCorrection[],
+  autofitWrapCorrections: PptxAutofitWrapCorrection[],
+  textAlignmentCorrections: PptxTextAlignmentCorrection[]
 ): void {
   normalizePptxLayout(
     container,
     placeholderFontCorrections,
     autofitLineHeightCorrections,
     shapeFillCorrections,
-    autoNumberingCorrections
+    autoNumberingCorrections,
+    autofitWrapCorrections,
+    textAlignmentCorrections
   );
   let observer: MutationObserver | undefined;
   if (typeof MutationObserver !== "undefined") {
@@ -6472,7 +6753,9 @@ function schedulePptxLayoutNormalization(
         placeholderFontCorrections,
         autofitLineHeightCorrections,
         shapeFillCorrections,
-        autoNumberingCorrections
+        autoNumberingCorrections,
+        autofitWrapCorrections,
+        textAlignmentCorrections
       )
     );
     observer.observe(container, { childList: true, subtree: true });
@@ -6485,7 +6768,9 @@ function schedulePptxLayoutNormalization(
           placeholderFontCorrections,
           autofitLineHeightCorrections,
           shapeFillCorrections,
-          autoNumberingCorrections
+          autoNumberingCorrections,
+          autofitWrapCorrections,
+          textAlignmentCorrections
         );
       }
     }, delay);
@@ -6550,6 +6835,80 @@ function normalizePptxAutoNumbering(container: HTMLElement, corrections: PptxAut
       firstSpan.textContent = `${item.label} `;
       firstSpan.dataset.ofvPptxAutoNumber = item.label;
       unused.delete(paragraph);
+    }
+  }
+}
+
+function normalizePptxAutofitWrapping(container: HTMLElement, corrections: PptxAutofitWrapCorrection[]): void {
+  for (const correction of corrections) {
+    const wrapper = container.querySelector<HTMLElement>(`div[data-slide-index="${correction.slideIndex}"]`);
+    if (!wrapper) {
+      continue;
+    }
+    const paragraphs = Array.from(wrapper.querySelectorAll<HTMLElement>("div")).filter((element) => {
+      const children = Array.from(element.children);
+      return (
+        children.length > 0 &&
+        children.every((child) => child.tagName === "SPAN") &&
+        normalizePptxParagraphText(element.textContent || "") === correction.text
+      );
+    });
+    for (const paragraph of paragraphs) {
+      paragraph.style.whiteSpace = "nowrap";
+      paragraph.style.overflowWrap = "normal";
+      paragraph.style.wordBreak = "normal";
+      paragraph.style.maxWidth = "none";
+      paragraph.dataset.ofvPptxAutofitWrap = "true";
+    }
+  }
+}
+
+function normalizePptxTextAlignment(container: HTMLElement, corrections: PptxTextAlignmentCorrection[]): void {
+  for (const correction of corrections) {
+    const wrapper = container.querySelector<HTMLElement>(`div[data-slide-index="${correction.slideIndex}"]`);
+    if (!wrapper) {
+      continue;
+    }
+    const shapeText = correction.paragraphs.map((paragraph) => paragraph.text).join("");
+    const shape = Array.from(wrapper.querySelectorAll<HTMLElement>("div")).find(
+      (element) =>
+        element.style.position === "absolute" &&
+        normalizePptxParagraphText(element.textContent || "") === shapeText &&
+        element.querySelector("span")
+    );
+    if (!shape) {
+      continue;
+    }
+    const paragraphElements = Array.from(shape.querySelectorAll<HTMLElement>("div")).filter((element) => {
+      const children = Array.from(element.children);
+      return children.length > 0 && children.every((child) => child.tagName === "SPAN");
+    });
+    const unused = new Set(paragraphElements);
+    for (const paragraph of correction.paragraphs) {
+      const match = Array.from(unused).find(
+        (element) => normalizePptxParagraphText(element.textContent || "") === paragraph.text
+      );
+      if (!match) {
+        continue;
+      }
+      match.style.textAlign = paragraph.alignment;
+      match.dataset.ofvPptxTextAlignment = paragraph.alignment;
+      unused.delete(match);
+    }
+  }
+}
+
+function normalizePptxSlideNumbers(container: HTMLElement): void {
+  const wrappers = Array.from(container.querySelectorAll<HTMLElement>("div[data-slide-index]"));
+  for (const [position, wrapper] of wrappers.entries()) {
+    const parsedIndex = Number(wrapper.dataset.slideIndex);
+    const slideNumber = (Number.isInteger(parsedIndex) && parsedIndex >= 0 ? parsedIndex : position) + 1;
+    const placeholders = Array.from(wrapper.querySelectorAll<HTMLElement>("div, span")).filter(
+      (element) => element.children.length === 0 && (element.textContent || "").trim() === "‹#›"
+    );
+    for (const placeholder of placeholders) {
+      placeholder.textContent = String(slideNumber);
+      placeholder.dataset.ofvPptxSlideNumber = String(slideNumber);
     }
   }
 }
@@ -6856,6 +7215,8 @@ async function inspectPptxAutofitLineHeightCorrections(
 async function inspectPptxVisualCorrections(zip: JSZip): Promise<{
   shapeFillCorrections: PptxShapeFillCorrection[];
   autoNumberingCorrections: PptxAutoNumberingCorrection[];
+  autofitWrapCorrections: PptxAutofitWrapCorrection[];
+  textAlignmentCorrections: PptxTextAlignmentCorrection[];
 }> {
   const presentationXml = await zip.file("ppt/presentation.xml")?.async("text");
   const presentation = presentationXml ? parseOfficeXml(presentationXml) : undefined;
@@ -6866,8 +7227,11 @@ async function inspectPptxVisualCorrections(zip: JSZip): Promise<{
   const slideHeight = Number(slideSize?.getAttribute("cy"));
   const shapeFillCorrections: PptxShapeFillCorrection[] = [];
   const autoNumberingCorrections: PptxAutoNumberingCorrection[] = [];
+  const autofitWrapCorrections: PptxAutofitWrapCorrection[] = [];
+  const textAlignmentCorrections: PptxTextAlignmentCorrection[] = [];
+  const defaultTextAlignments = presentation ? readPptxDefaultTextAlignments(presentation) : new Map<number, string>();
   if (!(slideWidth > 0) || !(slideHeight > 0)) {
-    return { shapeFillCorrections, autoNumberingCorrections };
+    return { shapeFillCorrections, autoNumberingCorrections, autofitWrapCorrections, textAlignmentCorrections };
   }
 
   const slideEntries = Object.values(zip.files)
@@ -6880,6 +7244,34 @@ async function inspectPptxVisualCorrections(zip: JSZip): Promise<{
     }
     const shapes = Array.from(slide.getElementsByTagName("*")).filter((element) => element.localName === "sp");
     for (const shape of shapes) {
+      const textBody = findPptxChild(shape, "txBody");
+      const bodyProperties = textBody ? findPptxChild(textBody, "bodyPr") : undefined;
+      const paragraphs = textBody
+        ? Array.from(textBody.children).filter((element) => element.localName === "p")
+        : [];
+      if (textBody && bodyProperties && findPptxChild(bodyProperties, "spAutoFit")) {
+        const text = paragraphs.length === 1 ? normalizePptxParagraphText(paragraphs[0]?.textContent || "") : "";
+        if (text && !findPptxDescendant(paragraphs[0]!, "br")) {
+          autofitWrapCorrections.push({ slideIndex, text });
+        }
+      }
+      if (textBody && shape.parentElement?.localName === "grpSp" && paragraphs.length > 1) {
+        const listStyle = findPptxChild(textBody, "lstStyle");
+        const paragraphCorrections = paragraphs.flatMap((paragraph) => {
+          const text = normalizePptxParagraphText(paragraph.textContent || "");
+          const paragraphProperties = findPptxChild(paragraph, "pPr");
+          const level = Number(paragraphProperties?.getAttribute("lvl") || 0);
+          const listLevelProperties = listStyle ? findPptxChild(listStyle, `lvl${level + 1}pPr`) : undefined;
+          if (!text || paragraphProperties?.getAttribute("algn") || listLevelProperties?.getAttribute("algn")) {
+            return [];
+          }
+          const alignment = defaultTextAlignments.get(level);
+          return alignment ? [{ alignment, text }] : [];
+        });
+        if (paragraphCorrections.length > 0) {
+          textAlignmentCorrections.push({ slideIndex, paragraphs: paragraphCorrections });
+        }
+      }
       const geometry = readPptxShapeGeometry(shape, slideIndex, slideWidth, slideHeight);
       if (!geometry) {
         continue;
@@ -6891,7 +7283,6 @@ async function inspectPptxVisualCorrections(zip: JSZip): Promise<{
         shapeFillCorrections.push({ ...geometry, color: `#${rgb.toUpperCase()}` });
       }
 
-      const textBody = findPptxChild(shape, "txBody");
       if (!textBody) {
         continue;
       }
@@ -6920,7 +7311,32 @@ async function inspectPptxVisualCorrections(zip: JSZip): Promise<{
       }
     }
   }
-  return { shapeFillCorrections, autoNumberingCorrections };
+  return { shapeFillCorrections, autoNumberingCorrections, autofitWrapCorrections, textAlignmentCorrections };
+}
+
+function readPptxDefaultTextAlignments(presentation: Document): Map<number, string> {
+  const alignments = new Map<number, string>();
+  const defaultTextStyle = Array.from(presentation.getElementsByTagName("*")).find(
+    (element) => element.localName === "defaultTextStyle"
+  );
+  if (!defaultTextStyle) {
+    return alignments;
+  }
+  const cssAlignments: Record<string, string> = {
+    ctr: "center",
+    dist: "justify",
+    just: "justify",
+    l: "left",
+    r: "right"
+  };
+  for (const child of Array.from(defaultTextStyle.children)) {
+    const match = /^lvl(\d+)pPr$/.exec(child.localName);
+    const alignment = cssAlignments[child.getAttribute("algn") || ""];
+    if (match && alignment) {
+      alignments.set(Number(match[1]) - 1, alignment);
+    }
+  }
+  return alignments;
 }
 
 function readPptxShapeGeometry(
@@ -6951,7 +7367,9 @@ function readPptxShapeGeometry(
 
 function formatPptxAutoNumber(type: string, value: number): string | undefined {
   let label: string;
-  if (type.startsWith("arabic")) {
+  if (type.startsWith("ea1JpnChsDb")) {
+    label = toEastAsianNumeral(value);
+  } else if (type.startsWith("arabic")) {
     label = String(value);
   } else if (type.startsWith("romanUc")) {
     label = toRomanNumeral(value);
@@ -6973,7 +7391,37 @@ function formatPptxAutoNumber(type: string, value: number): string | undefined {
   if (type.endsWith("Plain")) {
     return label;
   }
+  if (type.startsWith("ea1JpnChsDb")) {
+    return `${label}．`;
+  }
   return `${label}.`;
+}
+
+function toEastAsianNumeral(value: number): string {
+  if (!Number.isInteger(value) || value <= 0 || value >= 10000) {
+    return String(value);
+  }
+  const digits = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
+  const units = ["", "十", "百", "千"];
+  let result = "";
+  let pendingZero = false;
+  for (let position = 3; position >= 0; position -= 1) {
+    const divisor = 10 ** position;
+    const digit = Math.floor(value / divisor) % 10;
+    if (digit === 0) {
+      pendingZero = result.length > 0;
+      continue;
+    }
+    if (pendingZero) {
+      result += digits[0];
+      pendingZero = false;
+    }
+    if (!(digit === 1 && position === 1 && result.length === 0)) {
+      result += digits[digit];
+    }
+    result += units[position];
+  }
+  return result;
 }
 
 function toRomanNumeral(value: number): string {
