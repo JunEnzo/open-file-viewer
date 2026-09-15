@@ -371,6 +371,17 @@ await Promise.all([
   useFetchData: true
 });</code></pre>
             </div>
+            <div class="doc-callout">
+              <strong>Mobile WebKit / older browser compatibility</strong>
+              <p>Bundle both PDF.js workers and pass <code>legacyWorkerSrc</code>. Auto mode switches the main module and worker together for mobile or non-Chromium WebKit and when <code>Promise.withResolvers</code> is unavailable.</p>
+            </div>
+            <div class="editor-window doc-code-window">
+              <div class="editor-titlebar"><span></span><span></span><span></span><strong>viewer.ts</strong></div>
+              <pre><code data-language="typescript">import workerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+import legacyWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
+
+pdfPlugin({ workerSrc, legacyWorkerSrc });</code></pre>
+            </div>
           </section>
 
           <section class="doc-panel" id="quick-start">
@@ -390,6 +401,7 @@ await Promise.all([
 } from "@open-file-viewer/core";
 import "@open-file-viewer/core/style.css";
 import workerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+import legacyWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 
 const viewer = createViewer({
   container: "#viewer",
@@ -400,7 +412,7 @@ const viewer = createViewer({
   toolbar: true,
   plugins: [
     imagePlugin(),
-    pdfPlugin({ workerSrc }),
+    pdfPlugin({ workerSrc, legacyWorkerSrc }),
     officePlugin(),
     textPlugin()
   ]

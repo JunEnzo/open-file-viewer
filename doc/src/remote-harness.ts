@@ -21,6 +21,7 @@ import {
 } from "@open-file-viewer/core";
 import "@open-file-viewer/core/style.css";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+import pdfLegacyWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import "./style.css";
 
 type RemoteHarnessCase = {
@@ -846,7 +847,7 @@ const plugins = [
   imagePlugin(),
   videoPlugin(),
   audioPlugin(),
-  pdfPlugin({ workerSrc: pdfWorkerSrc }),
+  pdfPlugin({ workerSrc: pdfWorkerSrc, legacyWorkerSrc: pdfLegacyWorkerSrc }),
   epubPlugin(),
   xpsPlugin(),
   officePlugin(),

@@ -22,6 +22,7 @@ import "@open-file-viewer/core/style.css";
 import { FileViewer } from "@open-file-viewer/react";
 import type { PreviewTheme } from "@open-file-viewer/react";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+import pdfLegacyWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import React, { useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
@@ -39,7 +40,7 @@ function App() {
       imagePlugin(),
       videoPlugin(),
       audioPlugin(),
-      pdfPlugin({ workerSrc: pdfWorkerSrc }),
+      pdfPlugin({ workerSrc: pdfWorkerSrc, legacyWorkerSrc: pdfLegacyWorkerSrc }),
       epubPlugin(),
       xpsPlugin(),
       officePlugin(),

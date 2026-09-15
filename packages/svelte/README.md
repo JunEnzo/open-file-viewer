@@ -33,13 +33,14 @@ npm install pdfjs-dist
   } from "@open-file-viewer/core";
   import "@open-file-viewer/core/style.css";
   import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+  import pdfLegacyWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 
   export let file: File;
 
   const plugins = [
     imagePlugin(),
     textPlugin(),
-    pdfPlugin({ workerSrc: pdfWorkerSrc }),
+    pdfPlugin({ workerSrc: pdfWorkerSrc, legacyWorkerSrc: pdfLegacyWorkerSrc }),
     officePlugin()
   ];
 </script>

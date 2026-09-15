@@ -16,6 +16,7 @@ type PdfDocumentProxyLike = {
 export interface PdfPluginOptions {
   pdfjs?: PdfJsModule;
   workerSrc?: string;
+  legacyWorkerSrc?: string;
   compatibilityMode?: "auto" | "modern" | "legacy";
   cMapUrl?: string;
   cMapPacked?: boolean;
@@ -43,6 +44,7 @@ export interface PdfDocumentPreviewOptions {
   };
   pdfjs?: PdfJsModule;
   workerSrc?: string;
+  legacyWorkerSrc?: string;
   compatibilityMode?: "auto" | "modern" | "legacy";
   cMapUrl?: string;
   cMapPacked?: boolean;
@@ -119,9 +121,11 @@ export async function renderPdfDocumentPreview(
   if (useLegacyCompatibility) {
     installPromiseWithResolversPolyfill();
   }
-  const pdf = options.pdfjs || (await import("pdfjs-dist"));
+  const pdf = options.pdfjs || (useLegacyCompatibility
+    ? await import("pdfjs-dist/legacy/build/pdf.mjs")
+    : await import("pdfjs-dist"));
   const messages: PreviewMessages = { ...defaultMessages["en-US"], ...options.messages };
-  configurePdfWorker(pdf, options.workerSrc, useLegacyCompatibility);
+  configurePdfWorker(pdf, options.workerSrc, options.legacyWorkerSrc, useLegacyCompatibility);
 
   const viewer = document.createElement("div");
   viewer.className = "ofv-pdf-viewer";
@@ -963,9 +967,15 @@ function createPdfPageNavigator(
   };
 }
 
-function configurePdfWorker(pdf: PdfJsModule, workerSrc?: string, legacy = false): void {
-  if (workerSrc) {
-    pdf.GlobalWorkerOptions.workerSrc = workerSrc;
+function configurePdfWorker(
+  pdf: PdfJsModule,
+  workerSrc?: string,
+  legacyWorkerSrc?: string,
+  legacy = false
+): void {
+  const configuredWorkerSrc = legacy ? legacyWorkerSrc || workerSrc : workerSrc;
+  if (configuredWorkerSrc) {
+    pdf.GlobalWorkerOptions.workerSrc = configuredWorkerSrc;
     return;
   }
 
@@ -991,7 +1001,11 @@ function shouldUseLegacyPdfCompatibility(mode: PdfPluginOptions["compatibilityMo
   if (typeof navigator === "undefined") {
     return false;
   }
-  return /(?:QIHU|360SE|360EE)/i.test(navigator.userAgent);
+  const userAgent = navigator.userAgent;
+  const isWebKit = /AppleWebKit/i.test(userAgent);
+  const isIosWebKit = /(?:iPhone|iPad|iPod)/i.test(userAgent);
+  const isNonWebKitBrowser = /(?:Chrome|Chromium|CriOS|Edg|OPR|SamsungBrowser)/i.test(userAgent);
+  return /(?:QIHU|360SE|360EE)/i.test(userAgent) || (isWebKit && (isIosWebKit || !isNonWebKitBrowser));
 }
 
 function installPromiseWithResolversPolyfill(): void {

@@ -25,6 +25,7 @@ import {
 } from "@open-file-viewer/core";
 import "@open-file-viewer/core/style.css";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+import pdfLegacyWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import Prism from "prismjs";
 import "prismjs/components/prism-bash";
 import "prismjs/components/prism-jsx";
@@ -1495,7 +1496,11 @@ function createPlugins() {
     imagePlugin(),
     videoPlugin(),
     audioPlugin(),
-    pdfPlugin({ workerSrc: pdfWorkerSrc, useFetchData: true }),
+    pdfPlugin({
+      workerSrc: pdfWorkerSrc,
+      legacyWorkerSrc: pdfLegacyWorkerSrc,
+      useFetchData: true
+    }),
     epubPlugin(),
     xpsPlugin(),
     officePlugin(),

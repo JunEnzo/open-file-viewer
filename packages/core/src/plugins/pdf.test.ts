@@ -258,7 +258,7 @@ describe("pdfPlugin", () => {
     viewer.destroy();
   });
 
-  it("uses the legacy worker and polyfills Promise.withResolvers in older Chromium browsers", async () => {
+  it("uses the legacy worker and polyfills Promise.withResolvers in older browser engines", async () => {
     vi.stubGlobal("IntersectionObserver", undefined);
     const promiseConstructor = Promise as PromiseConstructor & { withResolvers?: unknown };
     const originalDescriptor = Object.getOwnPropertyDescriptor(Promise, "withResolvers");
@@ -278,6 +278,94 @@ describe("pdfPlugin", () => {
 
       expect(typeof promiseConstructor.withResolvers).toBe("function");
       expect(pdfjs.GlobalWorkerOptions.workerSrc).toContain("/legacy/build/pdf.worker.mjs");
+      viewer.destroy();
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(Promise, "withResolvers", originalDescriptor);
+      } else {
+        Reflect.deleteProperty(promiseConstructor, "withResolvers");
+      }
+    }
+  });
+
+  it("selects a separately bundled legacy worker in mobile WebKit engines", async () => {
+    vi.stubGlobal("IntersectionObserver", undefined);
+    const promiseConstructor = Promise as PromiseConstructor & { withResolvers?: unknown };
+    const originalDescriptor = Object.getOwnPropertyDescriptor(Promise, "withResolvers");
+    if (typeof promiseConstructor.withResolvers !== "function") {
+      Object.defineProperty(promiseConstructor, "withResolvers", {
+        configurable: true,
+        writable: true,
+        value: () => ({ promise: Promise.resolve(), resolve: vi.fn(), reject: vi.fn() })
+      });
+    }
+    vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue(
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148"
+    );
+
+    try {
+      const container = createSizedContainer();
+      const pdfjs = createPdfJsMock();
+      const viewer = createViewer({
+        container,
+        file: new Blob(["pdf"], { type: "application/pdf" }),
+        fileName: "mobile-webkit.pdf",
+        plugins: [
+          pdfPlugin({
+            pdfjs,
+            workerSrc: "/assets/pdf.worker.mjs",
+            legacyWorkerSrc: "/assets/pdf.worker.legacy.mjs"
+          })
+        ]
+      });
+
+      await waitFor(() => container.querySelectorAll("canvas.ofv-pdf-page").length === 2);
+
+      expect(pdfjs.GlobalWorkerOptions.workerSrc).toBe("/assets/pdf.worker.legacy.mjs");
+      viewer.destroy();
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(Promise, "withResolvers", originalDescriptor);
+      } else {
+        Reflect.deleteProperty(promiseConstructor, "withResolvers");
+      }
+    }
+  });
+
+  it("keeps the modern worker when the required browser APIs are available", async () => {
+    vi.stubGlobal("IntersectionObserver", undefined);
+    const promiseConstructor = Promise as PromiseConstructor & { withResolvers?: unknown };
+    const originalDescriptor = Object.getOwnPropertyDescriptor(Promise, "withResolvers");
+    if (typeof promiseConstructor.withResolvers !== "function") {
+      Object.defineProperty(promiseConstructor, "withResolvers", {
+        configurable: true,
+        writable: true,
+        value: () => ({ promise: Promise.resolve(), resolve: vi.fn(), reject: vi.fn() })
+      });
+    }
+    vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36"
+    );
+
+    try {
+      const container = createSizedContainer();
+      const pdfjs = createPdfJsMock();
+      const viewer = createViewer({
+        container,
+        file: new Blob(["pdf"], { type: "application/pdf" }),
+        fileName: "modern-chromium.pdf",
+        plugins: [
+          pdfPlugin({
+            pdfjs,
+            workerSrc: "/assets/pdf.worker.mjs",
+            legacyWorkerSrc: "/assets/pdf.worker.legacy.mjs"
+          })
+        ]
+      });
+
+      await waitFor(() => container.querySelectorAll("canvas.ofv-pdf-page").length === 2);
+
+      expect(pdfjs.GlobalWorkerOptions.workerSrc).toBe("/assets/pdf.worker.mjs");
       viewer.destroy();
     } finally {
       if (originalDescriptor) {

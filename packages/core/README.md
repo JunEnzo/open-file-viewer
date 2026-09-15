@@ -174,13 +174,14 @@ import {
 } from "@open-file-viewer/core";
 import "@open-file-viewer/core/style.css";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+import pdfLegacyWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 
 const plugins = [
   imagePlugin(),
   videoPlugin(),
   audioPlugin(),
   textPlugin(),
-  pdfPlugin({ workerSrc: pdfWorkerSrc }),
+  pdfPlugin({ workerSrc: pdfWorkerSrc, legacyWorkerSrc: pdfLegacyWorkerSrc }),
   officePlugin(),
   archivePlugin(),
   emailPlugin(),
@@ -242,13 +243,22 @@ pdfPlugin({
 This keeps compatibility at the cost of holding one extra copy of the PDF in memory, so use it only
 for affected environments.
 
-For 360 Secure Browser, 360 Extreme Browser, and older Chromium kernels, `pdfPlugin()` defaults to
+For mobile or non-Chromium WebKit, 360 browsers, and other older engines, `pdfPlugin()` defaults to
 `compatibilityMode: "auto"`. It installs the `Promise.withResolvers` compatibility shim when needed
-and selects the matching PDF.js legacy worker. If an enterprise browser hides its 360 user-agent
-marker, force the compatibility path with `pdfPlugin({ compatibilityMode: "legacy" })`. When
-self-hosting that worker, point `workerSrc` to the same-version
-`pdfjs-dist/legacy/build/pdf.worker.min.mjs`. Use `compatibilityMode: "modern"` only when targeting
-modern Chrome or Edge exclusively.
+and selects both the PDF.js legacy main module and legacy worker. When bundling workers, provide both
+URLs so auto mode can keep the modern worker on current browsers and switch the complete PDF.js pair
+on affected engines:
+
+```ts
+import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+import pdfLegacyWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
+
+pdfPlugin({ workerSrc: pdfWorkerSrc, legacyWorkerSrc: pdfLegacyWorkerSrc });
+```
+
+If an enterprise browser obscures feature or user-agent detection, force the compatibility path with
+`pdfPlugin({ workerSrc: pdfLegacyWorkerSrc, compatibilityMode: "legacy" })`. Use
+`compatibilityMode: "modern"` only when targeting current browsers exclusively.
 
 ## High-Fidelity Office Conversion
 

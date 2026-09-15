@@ -23,6 +23,7 @@
   import "@open-file-viewer/core/style.css";
   import { OpenFileViewer } from "@open-file-viewer/svelte";
   import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+  import pdfLegacyWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 
   let locale: PreviewLocale = "en-US";
   let theme: PreviewTheme = "light";
@@ -36,7 +37,7 @@
     imagePlugin(),
     videoPlugin(),
     audioPlugin(),
-    pdfPlugin({ workerSrc: pdfWorkerSrc }),
+    pdfPlugin({ workerSrc: pdfWorkerSrc, legacyWorkerSrc: pdfLegacyWorkerSrc }),
     epubPlugin(),
     xpsPlugin(),
     officePlugin(),

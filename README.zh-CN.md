@@ -141,13 +141,14 @@ import {
 } from "@open-file-viewer/core";
 import "@open-file-viewer/core/style.css";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+import pdfLegacyWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 
 const plugins = [
   imagePlugin(),
   videoPlugin(),
   audioPlugin(),
   textPlugin(),
-  pdfPlugin({ workerSrc: pdfWorkerSrc }),
+  pdfPlugin({ workerSrc: pdfWorkerSrc, legacyWorkerSrc: pdfLegacyWorkerSrc }),
   officePlugin(),
   archivePlugin(),
   emailPlugin(),
@@ -207,20 +208,25 @@ pdfPlugin({
 
 这个选项会多占用一份 PDF 文件内存，建议只在遇到上述兼容问题时开启。
 
-### 360 浏览器 PDF 兼容
+### 移动 WebKit / 旧浏览器 PDF 兼容
 
-`pdfPlugin()` 默认使用 `compatibilityMode: "auto"`。当检测到 360 浏览器标识，或当前 Chromium
-缺少 PDF.js 4 依赖的 `Promise.withResolvers` 时，会自动补齐兼容实现并切换到 PDF.js legacy worker。
-如果企业环境修改了浏览器 UA，无法被自动识别，可以显式开启：
+`pdfPlugin()` 默认使用 `compatibilityMode: "auto"`。检测到移动 WebKit、非 Chromium WebKit、
+360 浏览器标识，或内核缺少 PDF.js 4 依赖的 `Promise.withResolvers` 时，会自动补齐兼容实现，
+并同时切换到 PDF.js legacy 主模块和 worker。使用构建器托管 worker 时，需要把两个 URL 都传入：
 
 ```ts
+import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+import pdfLegacyWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
+
 pdfPlugin({
-  compatibilityMode: "legacy"
+  workerSrc: pdfWorkerSrc,
+  legacyWorkerSrc: pdfLegacyWorkerSrc
 });
 ```
 
-需要自行托管 worker 时，请让 `workerSrc` 指向同版本的
-`pdfjs-dist/legacy/build/pdf.worker.min.mjs`。确认只面向现代 Chrome、Edge 时，也可以设置
+如果企业环境改写了能力或 UA 检测结果，可以显式设置 `compatibilityMode: "legacy"`；此时未提供
+`legacyWorkerSrc` 会回退使用 `workerSrc`，因此该 URL 必须指向同版本的
+`pdfjs-dist/legacy/build/pdf.worker.mjs`。确认只面向现代浏览器时，可以设置
 `compatibilityMode: "modern"`。
 
 ### 远程 PDF fallback 的跨浏览器兼容
@@ -266,11 +272,12 @@ import { FileViewer } from "@open-file-viewer/react";
 import { imagePlugin, pdfPlugin, officePlugin, textPlugin } from "@open-file-viewer/core";
 import "@open-file-viewer/core/style.css";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+import pdfLegacyWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 
 const plugins = [
   imagePlugin(),
   textPlugin(),
-  pdfPlugin({ workerSrc: pdfWorkerSrc }),
+  pdfPlugin({ workerSrc: pdfWorkerSrc, legacyWorkerSrc: pdfLegacyWorkerSrc }),
   officePlugin()
 ];
 
@@ -298,13 +305,14 @@ import { OpenFileViewer } from "@open-file-viewer/vue";
 import { imagePlugin, pdfPlugin, officePlugin, textPlugin } from "@open-file-viewer/core";
 import "@open-file-viewer/core/style.css";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+import pdfLegacyWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 
 defineProps<{ file: File }>();
 
 const plugins = [
   imagePlugin(),
   textPlugin(),
-  pdfPlugin({ workerSrc: pdfWorkerSrc }),
+  pdfPlugin({ workerSrc: pdfWorkerSrc, legacyWorkerSrc: pdfLegacyWorkerSrc }),
   officePlugin()
 ];
 </script>
@@ -331,13 +339,14 @@ const plugins = [
   import { imagePlugin, pdfPlugin, officePlugin, textPlugin } from "@open-file-viewer/core";
   import "@open-file-viewer/core/style.css";
   import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+  import pdfLegacyWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 
   export let file: File;
 
   const plugins = [
     imagePlugin(),
     textPlugin(),
-    pdfPlugin({ workerSrc: pdfWorkerSrc }),
+    pdfPlugin({ workerSrc: pdfWorkerSrc, legacyWorkerSrc: pdfLegacyWorkerSrc }),
     officePlugin()
   ];
 </script>
