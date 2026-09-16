@@ -6367,6 +6367,8 @@ async function renderPptx(panel: HTMLElement, arrayBuffer: ArrayBuffer): Promise
   let autoNumberingCorrections: PptxAutoNumberingCorrection[] = [];
   let autofitWrapCorrections: PptxAutofitWrapCorrection[] = [];
   let textAlignmentCorrections: PptxTextAlignmentCorrection[] = [];
+  let imageClipCorrections: PptxImageClipCorrection[] = [];
+  let transparentChartCorrections: PptxTransparentChartCorrection[] = [];
 
   try {
     zip = await JSZip.loadAsync(arrayBuffer);
@@ -6391,7 +6393,9 @@ async function renderPptx(panel: HTMLElement, arrayBuffer: ArrayBuffer): Promise
         shapeFillCorrections,
         autoNumberingCorrections,
         autofitWrapCorrections,
-        textAlignmentCorrections
+        textAlignmentCorrections,
+        imageClipCorrections,
+        transparentChartCorrections
       } = await inspectPptxVisualCorrections(zip));
     } catch (error) {
       console.warn("PPTX visual correction extraction failed:", error);
@@ -6414,7 +6418,9 @@ async function renderPptx(panel: HTMLElement, arrayBuffer: ArrayBuffer): Promise
       shapeFillCorrections,
       autoNumberingCorrections,
       autofitWrapCorrections,
-      textAlignmentCorrections
+      textAlignmentCorrections,
+      imageClipCorrections,
+      transparentChartCorrections
     );
   } catch (error) {
     container.replaceChildren();
@@ -6700,6 +6706,12 @@ type PptxTextAlignmentCorrection = {
   }>;
 };
 
+type PptxImageClipCorrection = PptxShapeGeometry & {
+  paths: string[];
+};
+
+type PptxTransparentChartCorrection = PptxShapeGeometry;
+
 function normalizePptxLayout(
   container: HTMLElement,
   placeholderFontCorrections: PptxPlaceholderFontCorrection[],
@@ -6707,7 +6719,9 @@ function normalizePptxLayout(
   shapeFillCorrections: PptxShapeFillCorrection[],
   autoNumberingCorrections: PptxAutoNumberingCorrection[],
   autofitWrapCorrections: PptxAutofitWrapCorrection[],
-  textAlignmentCorrections: PptxTextAlignmentCorrection[]
+  textAlignmentCorrections: PptxTextAlignmentCorrection[],
+  imageClipCorrections: PptxImageClipCorrection[],
+  transparentChartCorrections: PptxTransparentChartCorrection[]
 ): void {
   const slideCanvases = findPptxSlideCanvases(container);
   for (const slide of slideCanvases) {
@@ -6721,6 +6735,8 @@ function normalizePptxLayout(
   normalizePptxAutoNumbering(container, autoNumberingCorrections);
   normalizePptxAutofitWrapping(container, autofitWrapCorrections);
   normalizePptxTextAlignment(container, textAlignmentCorrections);
+  normalizePptxImageClips(container, imageClipCorrections);
+  normalizePptxTransparentCharts(container, transparentChartCorrections);
   normalizePptxSlideNumbers(container);
   normalizePptxCircleCalloutText(container);
   normalizePptxDiagramCycleText(container);
@@ -6734,7 +6750,9 @@ function schedulePptxLayoutNormalization(
   shapeFillCorrections: PptxShapeFillCorrection[],
   autoNumberingCorrections: PptxAutoNumberingCorrection[],
   autofitWrapCorrections: PptxAutofitWrapCorrection[],
-  textAlignmentCorrections: PptxTextAlignmentCorrection[]
+  textAlignmentCorrections: PptxTextAlignmentCorrection[],
+  imageClipCorrections: PptxImageClipCorrection[],
+  transparentChartCorrections: PptxTransparentChartCorrection[]
 ): void {
   normalizePptxLayout(
     container,
@@ -6743,7 +6761,9 @@ function schedulePptxLayoutNormalization(
     shapeFillCorrections,
     autoNumberingCorrections,
     autofitWrapCorrections,
-    textAlignmentCorrections
+    textAlignmentCorrections,
+    imageClipCorrections,
+    transparentChartCorrections
   );
   let observer: MutationObserver | undefined;
   if (typeof MutationObserver !== "undefined") {
@@ -6755,7 +6775,9 @@ function schedulePptxLayoutNormalization(
         shapeFillCorrections,
         autoNumberingCorrections,
         autofitWrapCorrections,
-        textAlignmentCorrections
+        textAlignmentCorrections,
+        imageClipCorrections,
+        transparentChartCorrections
       )
     );
     observer.observe(container, { childList: true, subtree: true });
@@ -6770,12 +6792,74 @@ function schedulePptxLayoutNormalization(
           shapeFillCorrections,
           autoNumberingCorrections,
           autofitWrapCorrections,
-          textAlignmentCorrections
+          textAlignmentCorrections,
+          imageClipCorrections,
+          transparentChartCorrections
         );
       }
     }, delay);
   }
   window.setTimeout(() => observer?.disconnect(), 5000);
+}
+
+let pptxClipPathSequence = 0;
+
+function normalizePptxImageClips(container: HTMLElement, corrections: PptxImageClipCorrection[]): void {
+  for (const correction of corrections) {
+    const wrapper = container.querySelector<HTMLElement>(`div[data-slide-index="${correction.slideIndex}"]`);
+    const match = wrapper
+      ? findPptxGeometryElement(wrapper, correction, (element) =>
+          Array.from(element.children).some((child) => child instanceof HTMLImageElement)
+        )
+      : undefined;
+    if (!match || match.dataset.ofvPptxImageClip === "true") {
+      continue;
+    }
+    const clipId = `ofv-pptx-image-clip-${pptxClipPathSequence++}`;
+    const definitions = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    definitions.setAttribute("width", "0");
+    definitions.setAttribute("height", "0");
+    definitions.setAttribute("aria-hidden", "true");
+    definitions.dataset.ofvPptxClipDefinitions = "true";
+    const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    const clipPath = document.createElementNS("http://www.w3.org/2000/svg", "clipPath");
+    clipPath.id = clipId;
+    clipPath.setAttribute("clipPathUnits", "objectBoundingBox");
+    for (const pathData of correction.paths) {
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", pathData);
+      clipPath.append(path);
+    }
+    defs.append(clipPath);
+    definitions.append(defs);
+    match.append(definitions);
+    const clipReference = `url("#${clipId}")`;
+    match.style.clipPath = clipReference;
+    match.style.setProperty("-webkit-clip-path", clipReference);
+    match.dataset.ofvPptxImageClip = "true";
+  }
+}
+
+function normalizePptxTransparentCharts(
+  container: HTMLElement,
+  corrections: PptxTransparentChartCorrection[]
+): void {
+  for (const correction of corrections) {
+    const wrapper = container.querySelector<HTMLElement>(`div[data-slide-index="${correction.slideIndex}"]`);
+    const match = wrapper
+      ? findPptxGeometryElement(wrapper, correction, (element) => Boolean(element.querySelector("[_echarts_instance_]")))
+      : undefined;
+    if (!match) {
+      continue;
+    }
+    for (const element of [match, ...Array.from(match.querySelectorAll<HTMLElement>("div"))]) {
+      const background = element.style.backgroundColor.replace(/\s+/g, "").toLowerCase();
+      if (background === "white" || background === "#fff" || background === "#ffffff" || background === "rgb(255,255,255)") {
+        element.style.backgroundColor = "transparent";
+      }
+    }
+    match.dataset.ofvPptxTransparentChart = "true";
+  }
 }
 
 function normalizePptxShapeFills(container: HTMLElement, corrections: PptxShapeFillCorrection[]): void {
@@ -7217,6 +7301,8 @@ async function inspectPptxVisualCorrections(zip: JSZip): Promise<{
   autoNumberingCorrections: PptxAutoNumberingCorrection[];
   autofitWrapCorrections: PptxAutofitWrapCorrection[];
   textAlignmentCorrections: PptxTextAlignmentCorrection[];
+  imageClipCorrections: PptxImageClipCorrection[];
+  transparentChartCorrections: PptxTransparentChartCorrection[];
 }> {
   const presentationXml = await zip.file("ppt/presentation.xml")?.async("text");
   const presentation = presentationXml ? parseOfficeXml(presentationXml) : undefined;
@@ -7229,9 +7315,18 @@ async function inspectPptxVisualCorrections(zip: JSZip): Promise<{
   const autoNumberingCorrections: PptxAutoNumberingCorrection[] = [];
   const autofitWrapCorrections: PptxAutofitWrapCorrection[] = [];
   const textAlignmentCorrections: PptxTextAlignmentCorrection[] = [];
+  const imageClipCorrections: PptxImageClipCorrection[] = [];
+  const transparentChartCorrections: PptxTransparentChartCorrection[] = [];
   const defaultTextAlignments = presentation ? readPptxDefaultTextAlignments(presentation) : new Map<number, string>();
   if (!(slideWidth > 0) || !(slideHeight > 0)) {
-    return { shapeFillCorrections, autoNumberingCorrections, autofitWrapCorrections, textAlignmentCorrections };
+    return {
+      shapeFillCorrections,
+      autoNumberingCorrections,
+      autofitWrapCorrections,
+      textAlignmentCorrections,
+      imageClipCorrections,
+      transparentChartCorrections
+    };
   }
 
   const slideEntries = Object.values(zip.files)
@@ -7241,6 +7336,44 @@ async function inspectPptxVisualCorrections(zip: JSZip): Promise<{
     const slide = parseOfficeXml(await entry.async("text"));
     if (!slide) {
       continue;
+    }
+    const relationships = await readPptxRelationships(zip, entry.name);
+    const pictures = Array.from(slide.getElementsByTagName("*")).filter((element) => element.localName === "pic");
+    for (const picture of pictures) {
+      const geometry = readPptxShapeGeometry(picture, slideIndex, slideWidth, slideHeight);
+      const shapeProperties = findPptxChild(picture, "spPr");
+      const customGeometry = shapeProperties ? findPptxChild(shapeProperties, "custGeom") : undefined;
+      const paths = customGeometry ? readPptxCustomGeometryPaths(customGeometry) : [];
+      if (geometry && paths.length > 0) {
+        imageClipCorrections.push({ ...geometry, paths });
+      }
+    }
+    const graphicFrames = Array.from(slide.getElementsByTagName("*")).filter(
+      (element) => element.localName === "graphicFrame"
+    );
+    for (const frame of graphicFrames) {
+      const graphicData = findPptxDescendant(frame, "graphicData");
+      if (!graphicData?.getAttribute("uri")?.endsWith("/chart")) {
+        continue;
+      }
+      const chartReference = findPptxDescendant(graphicData, "chart");
+      const relationshipId = chartReference?.getAttribute("r:id") || "";
+      const relationship = relationships.find((candidate) => candidate.id === relationshipId);
+      const chartPath = relationship ? resolvePptxRelationshipTarget(entry.name, relationship.target) : undefined;
+      const chartXml = chartPath ? await zip.file(chartPath)?.async("text") : undefined;
+      const chart = chartXml ? parseOfficeXml(chartXml) : undefined;
+      const chartSpace = chart?.documentElement;
+      const chartProperties = chartSpace ? findPptxChild(chartSpace, "spPr") : undefined;
+      if (!chartProperties || !findPptxChild(chartProperties, "noFill")) {
+        continue;
+      }
+      const transform = findPptxChild(frame, "xfrm");
+      const geometry = transform
+        ? readPptxTransformGeometry(transform, slideIndex, slideWidth, slideHeight)
+        : undefined;
+      if (geometry) {
+        transparentChartCorrections.push(geometry);
+      }
     }
     const shapes = Array.from(slide.getElementsByTagName("*")).filter((element) => element.localName === "sp");
     for (const shape of shapes) {
@@ -7311,7 +7444,14 @@ async function inspectPptxVisualCorrections(zip: JSZip): Promise<{
       }
     }
   }
-  return { shapeFillCorrections, autoNumberingCorrections, autofitWrapCorrections, textAlignmentCorrections };
+  return {
+    shapeFillCorrections,
+    autoNumberingCorrections,
+    autofitWrapCorrections,
+    textAlignmentCorrections,
+    imageClipCorrections,
+    transparentChartCorrections
+  };
 }
 
 function readPptxDefaultTextAlignments(presentation: Document): Map<number, string> {
@@ -7347,6 +7487,15 @@ function readPptxShapeGeometry(
 ): PptxShapeGeometry | undefined {
   const shapeProperties = findPptxChild(shape, "spPr");
   const transform = shapeProperties ? findPptxChild(shapeProperties, "xfrm") : undefined;
+  return transform ? readPptxTransformGeometry(transform, slideIndex, slideWidth, slideHeight) : undefined;
+}
+
+function readPptxTransformGeometry(
+  transform: Element,
+  slideIndex: number,
+  slideWidth: number,
+  slideHeight: number
+): PptxShapeGeometry | undefined {
   const offset = transform ? findPptxChild(transform, "off") : undefined;
   const extent = transform ? findPptxChild(transform, "ext") : undefined;
   const left = Number(offset?.getAttribute("x"));
@@ -7363,6 +7512,102 @@ function readPptxShapeGeometry(
     widthRatio: width / slideWidth,
     heightRatio: height / slideHeight
   };
+}
+
+function readPptxCustomGeometryPaths(customGeometry: Element): string[] {
+  const pathList = findPptxChild(customGeometry, "pathLst");
+  if (!pathList) {
+    return [];
+  }
+  const guides = readPptxCustomGeometryGuides(customGeometry);
+  return Array.from(pathList.children).flatMap((path) => {
+    if (path.localName !== "path" || path.getAttribute("fill") === "none") {
+      return [];
+    }
+    const width = Number(path.getAttribute("w"));
+    const height = Number(path.getAttribute("h"));
+    if (!(width > 0) || !(height > 0)) {
+      return [];
+    }
+    const variables = new Map<string, number>([
+      ["w", width],
+      ["h", height],
+      ["l", 0],
+      ["t", 0],
+      ["r", width],
+      ["b", height],
+      ["hc", width / 2],
+      ["vc", height / 2]
+    ]);
+    for (const [name, formula] of guides) {
+      const value = evaluatePptxGuideFormula(formula, variables);
+      if (Number.isFinite(value)) {
+        variables.set(name, value);
+      }
+    }
+    const commands: string[] = [];
+    for (const command of Array.from(path.children)) {
+      const points = Array.from(command.children).filter((child) => child.localName === "pt");
+      const point = (index: number) => {
+        const current = points[index];
+        if (!current) {
+          return undefined;
+        }
+        const x = readPptxPathCoordinate(current.getAttribute("x"), variables) / width;
+        const y = readPptxPathCoordinate(current.getAttribute("y"), variables) / height;
+        return Number.isFinite(x) && Number.isFinite(y) ? `${formatPptxPathNumber(x)} ${formatPptxPathNumber(y)}` : undefined;
+      };
+      if (command.localName === "moveTo" && point(0)) {
+        commands.push(`M ${point(0)}`);
+      } else if (command.localName === "lnTo" && point(0)) {
+        commands.push(`L ${point(0)}`);
+      } else if (command.localName === "cubicBezTo" && point(0) && point(1) && point(2)) {
+        commands.push(`C ${point(0)} ${point(1)} ${point(2)}`);
+      } else if (command.localName === "quadBezTo" && point(0) && point(1)) {
+        commands.push(`Q ${point(0)} ${point(1)}`);
+      } else if (command.localName === "close") {
+        commands.push("Z");
+      }
+    }
+    return commands.length > 1 ? [commands.join(" ")] : [];
+  });
+}
+
+function readPptxCustomGeometryGuides(customGeometry: Element): Array<[string, string]> {
+  const guideList = findPptxChild(customGeometry, "gdLst");
+  return guideList
+    ? Array.from(guideList.children).flatMap((guide) => {
+        const name = guide.getAttribute("name") || "";
+        const formula = guide.getAttribute("fmla") || "";
+        return guide.localName === "gd" && name && formula ? [[name, formula] as [string, string]] : [];
+      })
+    : [];
+}
+
+function evaluatePptxGuideFormula(formula: string, variables: Map<string, number>): number {
+  const [operator, ...operands] = formula.trim().split(/\s+/);
+  const value = (index: number) => readPptxPathCoordinate(operands[index], variables);
+  if (operator === "val") return value(0);
+  if (operator === "*/") return (value(0) * value(1)) / value(2);
+  if (operator === "+-") return value(0) + value(1) - value(2);
+  if (operator === "+/") return (value(0) + value(1)) / value(2);
+  if (operator === "?:") return value(0) > 0 ? value(1) : value(2);
+  if (operator === "abs") return Math.abs(value(0));
+  if (operator === "min") return Math.min(value(0), value(1));
+  if (operator === "max") return Math.max(value(0), value(1));
+  return Number.NaN;
+}
+
+function readPptxPathCoordinate(value: string | null | undefined, variables: Map<string, number>): number {
+  if (!value) {
+    return Number.NaN;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : variables.get(value) ?? Number.NaN;
+}
+
+function formatPptxPathNumber(value: number): string {
+  return Number(value.toFixed(8)).toString();
 }
 
 function formatPptxAutoNumber(type: string, value: number): string | undefined {

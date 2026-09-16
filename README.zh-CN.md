@@ -229,6 +229,20 @@ pdfPlugin({
 `pdfjs-dist/legacy/build/pdf.worker.mjs`。确认只面向现代浏览器时，可以设置
 `compatibilityMode: "modern"`。
 
+### PDF.js WASM 图片解码器
+
+PDF.js 5+ 使用 `pdfjs-dist/wasm/` 中的文件解码 JPEG2000（JPX）、JBIG2 等图片格式。
+请将该目录部署到业务应用可访问的位置，并把带结尾斜杠的公开 URL 传给插件：
+
+```ts
+pdfPlugin({
+  workerSrc: pdfWorkerSrc,
+  wasmUrl: "/pdfjs/wasm/"
+});
+```
+
+部署的 WASM 文件版本应与当前安装的 `pdfjs-dist` 一致。PDF.js 4 会忽略这个用于向前兼容的选项。
+
 ### 远程 PDF fallback 的跨浏览器兼容
 
 当 PDF.js 无法解析或加载远程 PDF URL 时，PDF 插件会使用浏览器内置的 PDF 阅读器作为

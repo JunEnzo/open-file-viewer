@@ -21,6 +21,7 @@ export interface PdfPluginOptions {
   cMapUrl?: string;
   cMapPacked?: boolean;
   standardFontDataUrl?: string;
+  wasmUrl?: string;
   useSystemFonts?: boolean;
   disableStream?: boolean;
   disableAutoFetch?: boolean;
@@ -49,6 +50,7 @@ export interface PdfDocumentPreviewOptions {
   cMapUrl?: string;
   cMapPacked?: boolean;
   standardFontDataUrl?: string;
+  wasmUrl?: string;
   useSystemFonts?: boolean;
   disableStream?: boolean;
   disableAutoFetch?: boolean;
@@ -179,17 +181,22 @@ export async function renderPdfDocumentPreview(
   let doc: PdfDocumentProxyLike | undefined;
   try {
     const pdfData = options.useFetchData ? await loadPdfData(options.fileUrl) : undefined;
-    documentTask = pdf.getDocument({
+    // Keep this object separate from the call so the package can still be
+    // type-checked against PDF.js 4, whose DocumentInitParameters predates
+    // `wasmUrl`, while forwarding it to PDF.js 5+ at runtime.
+    const documentOptions = {
       ...(pdfData ? { data: pdfData } : { url: options.fileUrl }),
       cMapUrl: options.cMapUrl ?? `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdf.version}/cmaps/`,
       cMapPacked: options.cMapPacked ?? true,
       standardFontDataUrl: options.standardFontDataUrl ?? `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdf.version}/standard_fonts/`,
+      ...(options.wasmUrl === undefined ? {} : { wasmUrl: options.wasmUrl }),
       useSystemFonts: options.useSystemFonts ?? true,
       disableStream: options.disableStream,
       disableAutoFetch: options.disableAutoFetch,
       disableRange: options.disableRange,
       rangeChunkSize: options.rangeChunkSize
-    });
+    };
+    documentTask = pdf.getDocument(documentOptions);
     doc = (await documentTask.promise.catch((error: unknown) => {
       showDocumentFallback(error);
       return undefined;

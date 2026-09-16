@@ -260,6 +260,20 @@ If an enterprise browser obscures feature or user-agent detection, force the com
 `pdfPlugin({ workerSrc: pdfLegacyWorkerSrc, compatibilityMode: "legacy" })`. Use
 `compatibilityMode: "modern"` only when targeting current browsers exclusively.
 
+PDF.js 5+ loads JPEG2000 (JPX), JBIG2, and related image decoders from
+`pdfjs-dist/wasm/`. Serve that directory from the host application and pass its
+public URL, including the trailing slash. The hosted files must match the
+installed `pdfjs-dist` version:
+
+```ts
+pdfPlugin({
+  workerSrc: pdfWorkerSrc,
+  wasmUrl: "/pdfjs/wasm/"
+});
+```
+
+PDF.js 4 ignores this forward-compatible option.
+
 ## High-Fidelity Office Conversion
 
 Browser-side Office renderers cannot perfectly reproduce Word/WPS layout for files with anchored

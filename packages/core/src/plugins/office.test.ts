@@ -268,6 +268,30 @@ const openPptx = vi.hoisted(() =>
     const issueSlideNumber = document.createElement("span");
     issueSlideNumber.className = "pptx-issue-slide-number";
     issueSlideNumber.textContent = "‹#›";
+    const issueMaskedImage = document.createElement("div");
+    issueMaskedImage.className = "pptx-issue-masked-image";
+    issueMaskedImage.style.position = "absolute";
+    issueMaskedImage.style.left = "640px";
+    issueMaskedImage.style.top = "0px";
+    issueMaskedImage.style.width = "640px";
+    issueMaskedImage.style.height = "720px";
+    const issueImage = document.createElement("img");
+    issueMaskedImage.append(issueImage);
+    const issueTransparentChart = document.createElement("div");
+    issueTransparentChart.className = "pptx-issue-transparent-chart";
+    issueTransparentChart.style.position = "absolute";
+    issueTransparentChart.style.left = "100px";
+    issueTransparentChart.style.top = "146px";
+    issueTransparentChart.style.width = "510px";
+    issueTransparentChart.style.height = "482px";
+    const issueEcharts = document.createElement("div");
+    issueEcharts.setAttribute("_echarts_instance_", "ec_test");
+    const issueChartSurface = document.createElement("div");
+    issueChartSurface.style.backgroundColor = "rgb(255, 255, 255)";
+    const issueChartCanvas = document.createElement("canvas");
+    issueChartSurface.append(issueChartCanvas);
+    issueEcharts.append(issueChartSurface);
+    issueTransparentChart.append(issueEcharts);
     page.append(
       mirroredTextGroup,
       inheritedPlaceholder,
@@ -280,7 +304,9 @@ const openPptx = vi.hoisted(() =>
       issueCjkNumbering,
       issueAutofitText,
       issueDefaultAlignment,
-      issueSlideNumber
+      issueSlideNumber,
+      issueMaskedImage,
+      issueTransparentChart
     );
     viewport.append(page);
     wrapper.append(viewport);
@@ -3268,6 +3294,16 @@ describe("officePlugin", () => {
       )
     ).toEqual(["left", "left"]);
     expect(container.querySelector<HTMLElement>(".pptx-issue-slide-number")?.textContent).toBe("1");
+    const clippedImage = container.querySelector<HTMLElement>(".pptx-issue-masked-image");
+    expect(clippedImage?.dataset.ofvPptxImageClip).toBe("true");
+    expect(clippedImage?.style.clipPath).toContain("ofv-pptx-image-clip-");
+    expect(clippedImage?.querySelector("clipPath")?.getAttribute("clipPathUnits")).toBe("objectBoundingBox");
+    expect(clippedImage?.querySelector("clipPath path")?.getAttribute("d")).toBe("M 0 0 L 1 0 L 0.5 1 Z");
+    const transparentChart = container.querySelector<HTMLElement>(".pptx-issue-transparent-chart");
+    expect(transparentChart?.dataset.ofvPptxTransparentChart).toBe("true");
+    expect(transparentChart?.querySelector<HTMLElement>("[_echarts_instance_] > div")?.style.backgroundColor).toBe(
+      "transparent"
+    );
   });
 
   it("responds to shared toolbar zoom for PPTX previews", async () => {
@@ -5261,7 +5297,9 @@ async function createPptxVisualCorrectionFixture(): Promise<Blob> {
     "ppt/slides/slide1.xml",
     `<?xml version="1.0" encoding="UTF-8"?>
       <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
-        xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+        xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+        xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"
+        xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
         <p:cSld><p:spTree>
           <p:sp>
             <p:spPr>
@@ -5304,9 +5342,49 @@ async function createPptxVisualCorrectionFixture(): Promise<Blob> {
               </p:txBody>
             </p:sp>
           </p:grpSp>
+          <p:pic>
+            <p:blipFill><a:blip r:embed="rIdImage"/></p:blipFill>
+            <p:spPr>
+              <a:xfrm><a:off x="6400000" y="0"/><a:ext cx="6400000" cy="7200000"/></a:xfrm>
+              <a:custGeom>
+                <a:avLst/>
+                <a:gdLst><a:gd name="midX" fmla="*/ 1 w 2"/></a:gdLst>
+                <a:pathLst><a:path w="100" h="100">
+                  <a:moveTo><a:pt x="0" y="0"/></a:moveTo>
+                  <a:lnTo><a:pt x="100" y="0"/></a:lnTo>
+                  <a:lnTo><a:pt x="midX" y="100"/></a:lnTo>
+                  <a:close/>
+                </a:path></a:pathLst>
+              </a:custGeom>
+            </p:spPr>
+          </p:pic>
+          <p:graphicFrame>
+            <p:xfrm><a:off x="1000000" y="1460000"/><a:ext cx="5100000" cy="4820000"/></p:xfrm>
+            <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">
+              <c:chart r:id="rIdChart"/>
+            </a:graphicData></a:graphic>
+          </p:graphicFrame>
         </p:spTree></p:cSld>
       </p:sld>`
   );
+  zip.file(
+    "ppt/slides/_rels/slide1.xml.rels",
+    `<?xml version="1.0" encoding="UTF-8"?>
+      <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        <Relationship Id="rIdImage" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/>
+        <Relationship Id="rIdChart" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"/>
+      </Relationships>`
+  );
+  zip.file(
+    "ppt/charts/chart1.xml",
+    `<?xml version="1.0" encoding="UTF-8"?>
+      <c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"
+        xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+        <c:chart><c:plotArea/></c:chart>
+        <c:spPr><a:noFill/></c:spPr>
+      </c:chartSpace>`
+  );
+  zip.file("ppt/media/image1.png", "png");
   return zip.generateAsync({
     type: "blob",
     mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation"

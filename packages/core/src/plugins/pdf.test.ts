@@ -224,7 +224,7 @@ describe("pdfPlugin", () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith(objectUrl);
   });
 
-  it("allows overriding PDF CMap and standard font resources", async () => {
+  it("allows overriding PDF CMap, standard font, and WASM resources", async () => {
     vi.stubGlobal("IntersectionObserver", undefined);
     const container = createSizedContainer();
     const pdfjs = createPdfJsMock();
@@ -239,6 +239,7 @@ describe("pdfPlugin", () => {
           cMapUrl: "/assets/pdf-cmaps/",
           cMapPacked: false,
           standardFontDataUrl: "/assets/pdf-fonts/",
+          wasmUrl: "/assets/pdf-wasm/",
           useSystemFonts: false
         })
       ]
@@ -251,6 +252,7 @@ describe("pdfPlugin", () => {
         cMapPacked: false,
         cMapUrl: "/assets/pdf-cmaps/",
         standardFontDataUrl: "/assets/pdf-fonts/",
+        wasmUrl: "/assets/pdf-wasm/",
         useSystemFonts: false
       })
     );

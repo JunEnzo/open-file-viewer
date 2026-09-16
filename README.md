@@ -190,6 +190,22 @@ pdfPlugin({ webFallbackScripts: "always" }); // trusted PDF endpoints only
 This setting only affects the remote iframe fallback. It does not change the
 normal PDF.js rendering path or force a `referrerpolicy` value.
 
+### PDF.js WASM image decoders
+
+PDF.js 5+ uses files from `pdfjs-dist/wasm/` to decode formats such as JPEG2000
+(JPX) and JBIG2. Serve that directory from your application and pass its public
+URL, including the trailing slash, to the plugin:
+
+```ts
+pdfPlugin({
+  workerSrc: pdfWorkerSrc,
+  wasmUrl: "/pdfjs/wasm/"
+});
+```
+
+Keep the hosted WASM files on the same version as the installed `pdfjs-dist`.
+PDF.js 4 ignores this forward-compatible option.
+
 ### Office previews stuck on "Loading" inside qiankun / micro-app
 
 Micro-frontend sandboxes (qiankun, micro-app, ...) tear down window `message`
